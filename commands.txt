@@ -1,0 +1,27 @@
+docker restart whatsapp-bot
+
+docker restart whatsapp-ui
+
+docker restart uptime-kuma
+
+
+docker compose logs -f whatsapp-bot
+
+
+#--------To rescan the Qr code ----------
+
+cd ~/docker-stack
+docker compose stop whatsapp-bot
+rm -rf ./whatsapp-bot/wwebjs_auth
+mkdir ./whatsapp-bot/wwebjs_auth
+docker compose start whatsapp-bot
+
+#To get the QR Code
+
+docker compose logs -f whatsapp-bot
+
+#To fix permissions if required:
+
+sudo chown -R $USER:$USER ~/docker-stack/whatsapp-bot/wwebjs_auth
+
+

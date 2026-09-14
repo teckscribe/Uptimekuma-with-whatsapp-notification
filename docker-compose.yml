@@ -1,0 +1,85 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  uptime-kuma:
+    build: ./uptime-kuma
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./uptime-kuma-data:/app/data
+    environment:
+      - PUID=1000
+      - PGID=1000
+    networks:
+      - monitoring-network
+    logging: *default-logging
+
+  whatsapp-bot:
+    build: ./whatsapp-bot
+    container_name: whatsapp-bot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./whatsapp-bot/host_map.json:/app/host_map.json
+      - ./whatsapp-bot/wwebjs_auth:/app/wwebjs_auth
+    environment:
+      - HOOK_TOKEN=${HOOK_TOKEN}
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+      # Restart when the container's total footprint stays above this for 3 minutes.
+      # Measured steady state is ~750MB (mostly the Chromium renderer, which is
+      # irreducible for whatsapp-web.js). 1000 catches genuine drift without
+      # firing on normal fluctuation. 0 disables.
+      - MAX_MEM_MB=1000
+      # V8 heap cap for the Chromium renderer running WhatsApp Web.
+      - RENDERER_HEAP_MB=256
+    # Hard ceiling, sitting just above MAX_MEM_MB so the app restarts itself
+    # cleanly before the kernel OOM-kills it mid-send. The host only has 3.7GB,
+    # so this is deliberately not generous.
+    mem_limit: 1200m
+    # Equal to mem_limit = no swap for this container. The host is already
+    # swapping; letting Chromium in would thrash it.
+    memswap_limit: 1200m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>r.json()).then(j=>process.exit(j.whatsappReady?0:1)).catch(()=>process.exit(1))"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+    networks:
+      - monitoring-network
+    depends_on:
+      - uptime-kuma
+    logging: *default-logging
+
+  whatsapp-ui:
+    build:
+      context: ./whatsapp-bot
+      dockerfile: Dockerfile.ui
+    container_name: whatsapp-ui
+    user: "1000:1000"
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./whatsapp-bot/host_map.json:/app/host_map.json
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - monitoring-network
+    logging: *default-logging
+
+networks:
+  monitoring-network:
+    driver: bridge
