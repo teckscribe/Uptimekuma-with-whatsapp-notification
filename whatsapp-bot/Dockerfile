@@ -1,20 +1,15 @@
-FROM node:20-bookworm
+FROM node:20-bookworm-slim
 
-RUN apt-get update && apt-get install -y \
-    chromium \
-    gosu \
-    --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
-
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+# gosu: drop to UID 1000 after the entrypoint fixes bind-mount ownership.
+RUN apt-get update && apt-get install -y --no-install-recommends     gosu ca-certificates &&     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-RUN mkdir -p /app/wwebjs_auth /app/config && chown -R 1000:1000 /app
+RUN mkdir -p /app/auth /app/config && chown -R 1000:1000 /app
 
 COPY --chown=1000:1000 package*.json ./
-RUN npm ci --omit=dev
+# Optional deps are media codecs (sharp, jimp, audio); text alerts need none.
+RUN npm ci --omit=dev --omit=optional
 
 COPY --chown=1000:1000 src ./src
 

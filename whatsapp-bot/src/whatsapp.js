@@ -1,81 +1,56 @@
-import pkg from "whatsapp-web.js";
-const { Client, LocalAuth } = pkg;
+// WhatsApp transport built on Baileys: a direct implementation of the
+// WhatsApp Web WebSocket protocol. No Chromium, no Puppeteer, no page to
+// inject into. The whole client is a single Node process of ~100MB.
+//
+// Session credentials live in AUTH_DIR (bind-mounted). They are a linked
+// *device*: never copy them to a second machine.
+import {
+  makeWASocket,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+  DisconnectReason,
+  Browsers
+} from "@whiskeysockets/baileys";
+import pino from "pino";
 import qrcode from "qrcode-terminal";
-import { cleanProfileLocks, getReceivers } from "./utils.js";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from 'url';
+import { fileURLToPath } from "url";
+import { getReceivers } from "./utils.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, "..", "auth");
 const SEND_GAP_MS = Number(process.env.SEND_GAP_MS || 1500);
+// How long a queued alert waits for the connection before being dropped.
+const READY_WAIT_MS = Number(process.env.READY_WAIT_MS || 5 * 60_000);
 const WATCHDOG_INTERVAL_MS = Number(process.env.WATCHDOG_INTERVAL_MS || 60_000);
+// Baileys reconnects on its own with backoff; this is the backstop if it never
+// gets back to "open" - exit and let Docker restart the container.
 const UNHEALTHY_EXIT_MS = Number(process.env.UNHEALTHY_EXIT_MS || 10 * 60_000);
-// After a fresh QR scan WhatsApp Web does a full initial sync before the client
-// becomes usable. That can take far longer than UNHEALTHY_EXIT_MS, so the
-// watchdog gets a longer leash until the first `ready` of this process.
-const INITIAL_SYNC_GRACE_MS = Number(process.env.INITIAL_SYNC_GRACE_MS || 30 * 60_000);
-// How long a queued alert waits for the client to become ready before giving up.
-const READY_WAIT_MS = Number(process.env.READY_WAIT_MS || 15 * 60_000);
-const REINIT_DELAY_MS = 10_000;
-
-// Memory guard. Chromium's WhatsApp Web renderer grows steadily over days; when the
-// container's total footprint stays above MAX_MEM_MB we exit so Docker restarts us.
-// The session lives in wwebjs_auth, so a restart costs ~30s and no QR re-scan.
-// V8 heap cap for the WhatsApp Web renderer. 0 (default) = no cap. A cap
-// saves a little in steady state but a fresh-link sync of a real account can
-// exceed it, and when V8 hits the ceiling it aborts the renderer: the page
-// reloads, the sync restarts from zero, and the bot never reaches ready.
-const RENDERER_HEAP_MB = Number(process.env.RENDERER_HEAP_MB || 0);
+const MAX_RECONNECT_DELAY_MS = 30_000;
 const MAX_MEM_MB = Number(process.env.MAX_MEM_MB || 0); // 0 = disabled
 const MEM_STRIKES_BEFORE_EXIT = Number(process.env.MEM_STRIKES_BEFORE_EXIT || 3);
-const PROTOCOL_TIMEOUT_MS = Number(process.env.PROTOCOL_TIMEOUT_MS || 300_000);
 
-export const client = new Client({
-  authStrategy: new LocalAuth({
-    dataPath: path.join(__dirname, "..", "wwebjs_auth"),
-    clientId: "whatsapp-webhook-client"
-  }),
-  puppeteer: {
-    headless: true,
-    protocolTimeout: PROTOCOL_TIMEOUT_MS,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      ...(RENDERER_HEAP_MB > 0 ? [`--js-flags=--max-old-space-size=${RENDERER_HEAP_MB}`] : []),
-      "--disable-extensions",
-      "--disable-component-extensions-with-background-pages",
-      "--disable-default-apps",
-      "--disable-background-networking",
-      "--disable-sync",
-      "--disable-translate",
-      "--disable-breakpad",
-      "--disable-crash-reporter",
-      "--disable-accelerated-2d-canvas",
-      "--disable-backgrounding-occluded-windows",
-      "--metrics-recording-only",
-      "--mute-audio",
-      "--no-first-run",
-      "--no-default-browser-check"
-    ],
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium"
-  }
-});
+const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "warn" });
 
-export let qrGenerated = false;
+let sock = null;
 export let ready = false;
-let everReady = false;
+export let qrGenerated = false;
+let connectedAs = null;
 let lastHealthyAt = Date.now();
 let shuttingDown = false;
+let connecting = false;
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+let reconnectAllowed = true;
 
 export function healthSnapshot() {
   return {
     ready,
     qrGenerated,
+    connectedAs,
     unhealthyForSeconds: ready ? 0 : Math.round((Date.now() - lastHealthyAt) / 1000),
     memoryMB: lastMemMB,
     memoryLimitMB: MAX_MEM_MB || null,
@@ -83,59 +58,120 @@ export function healthSnapshot() {
   };
 }
 
-client.on("qr", qr => {
-  qrGenerated = true;
-  ready = false;
-  console.log("\n📱 SCAN QR CODE:\n");
-  qrcode.generate(qr, { small: true });
-});
+// ------------------------
+// Connection
+// ------------------------
 
-client.on("authenticated", () => {
-  console.log("✅ WhatsApp authenticated");
-  qrGenerated = false;
-  // Sync starts now. Give it the full grace window from this point.
-  lastHealthyAt = Date.now();
-  if (!everReady) console.log("⏳ Waiting for WhatsApp Web to finish syncing — this can take several minutes on a fresh link");
-});
+async function connect() {
+  if (shuttingDown || connecting) return;
+  connecting = true;
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    // Falls back to the bundled version if the lookup fails (offline).
+    const { version } = await fetchLatestBaileysVersion();
 
-client.on("auth_failure", msg => {
-  console.error("❌ WhatsApp auth failure:", msg);
-  ready = false;
-  // The stored session is no longer valid — a fresh QR scan is required.
-  // Re-initialize so the QR is emitted to the logs instead of sitting idle.
-  scheduleReinit();
-});
+    // Drop any previous socket before creating a new one, or its listeners
+    // keep firing alongside the new socket ("QR storm" symptom).
+    if (sock) {
+      try {
+        sock.ev.removeAllListeners("connection.update");
+        sock.ev.removeAllListeners("creds.update");
+        sock.end(undefined);
+      } catch { /* already dead */ }
+      sock = null;
+    }
 
-client.on("ready", () => {
-  console.log("✅ WhatsApp client READY");
-  ready = true;
-  everReady = true;
-  qrGenerated = false;
-  lastHealthyAt = Date.now();
-});
+    sock = makeWASocket({
+      version,
+      logger,
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, logger)
+      },
+      browser: Browsers.ubuntu("Chrome"),
+      markOnlineOnConnect: false,
+      syncFullHistory: false,
+      generateHighQualityLinkPreview: false
+    });
 
-client.on("disconnected", reason => {
-  console.log("⚠️ WhatsApp disconnected — reconnecting...", reason || "");
-  ready = false;
-  scheduleReinit();
-});
-
-// `disconnected` and `auth_failure` can both fire for one event. Two overlapping
-// initialize() calls launch two Chromiums on the same profile, which never
-// reaches `ready`. Coalesce them so only one reinit is ever pending.
-let reinitTimer = null;
-
-function scheduleReinit() {
-  if (shuttingDown) return;
-  if (reinitTimer) {
-    console.log("ℹ️ Reinit already scheduled — skipping duplicate");
-    return;
+    sock.ev.on("creds.update", saveCreds);
+    sock.ev.on("connection.update", onConnectionUpdate);
+  } finally {
+    connecting = false;
   }
-  cleanProfileLocks();
-  reinitTimer = setTimeout(() => {
-    reinitTimer = null;
-    safeInitialize();
-  }, REINIT_DELAY_MS);
+}
+
+function onConnectionUpdate({ connection, lastDisconnect, qr }) {
+  if (qr) {
+    qrGenerated = true;
+    ready = false;
+    console.log("\n📱 SCAN QR CODE:\n");
+    qrcode.generate(qr, { small: true });
+  }
+
+  if (connection === "connecting") {
+    console.log("🔌 Connecting to WhatsApp...");
+  }
+
+  if (connection === "open") {
+    ready = true;
+    qrGenerated = false;
+    reconnectAttempts = 0;
+    lastHealthyAt = Date.now();
+    connectedAs = sock?.user?.id?.split(":")[0] || null;
+    console.log(`✅ WhatsApp connected as ${connectedAs}`);
+  }
+
+  if (connection === "close") {
+    ready = false;
+    const code = lastDisconnect?.error?.output?.statusCode;
+    const reason = DisconnectReason[code] || code || "unknown";
+    console.log(`⚠️ WhatsApp connection closed (${reason})`);
+
+    if (code === DisconnectReason.loggedOut) {
+      // WhatsApp invalidated the session (unlinked from the phone, or banned).
+      // Clear it so the next connect produces a QR instead of looping.
+      console.error("❌ Session logged out by WhatsApp - a fresh QR scan is required");
+      clearAuthDir();
+      scheduleReconnect(0);
+    } else if (code === DisconnectReason.connectionReplaced) {
+      // Another machine is using these credentials. Reconnecting would just
+      // fight it. Stop and say so.
+      reconnectAllowed = false;
+      console.error("❌ Another instance took over this session. Stop the other machine, then restart this container.");
+    } else if (code === DisconnectReason.restartRequired) {
+      // Normal right after pairing: WhatsApp asks for one reconnect.
+      scheduleReconnect(0);
+    } else {
+      scheduleReconnect();
+    }
+  }
+}
+
+function scheduleReconnect(delayMs) {
+  if (shuttingDown || !reconnectAllowed || reconnectTimer) return;
+  const wait = delayMs ?? Math.min(MAX_RECONNECT_DELAY_MS, 3_000 * (reconnectAttempts + 1));
+  reconnectAttempts++;
+  if (wait > 0) console.log(`🔁 Reconnecting in ${wait / 1000}s (attempt ${reconnectAttempts})`);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect().catch(err => {
+      console.error("❌ Connect failed:", err.message);
+      scheduleReconnect();
+    });
+  }, wait);
+}
+
+// AUTH_DIR is a bind mount, so the directory itself cannot be removed -
+// empty it instead.
+function clearAuthDir() {
+  try {
+    for (const entry of fs.readdirSync(AUTH_DIR)) {
+      fs.rmSync(path.join(AUTH_DIR, entry), { recursive: true, force: true });
+    }
+  } catch (err) {
+    console.error("⚠️ Could not clear auth dir:", err.message);
+  }
 }
 
 // ------------------------
@@ -159,100 +195,6 @@ export function pendingSends() {
   return queueDepth;
 }
 
-export async function sendMessageToReceivers(hostname, message) {
-  const receivers = getReceivers(hostname);
-
-  if (!receivers.length) {
-    console.log("⚠️ No receivers for:", hostname);
-    return;
-  }
-
-  if (!ready) {
-    // Sending before `ready` fails with "Cannot read properties of undefined
-    // (reading 'getChat')" — the page helpers aren't injected yet. Hold the
-    // alert until the client is usable rather than dropping it.
-    console.log(`⏳ WhatsApp not ready — holding alert for ${hostname}`);
-    const becameReady = await waitForReady(READY_WAIT_MS);
-    if (!becameReady) {
-      console.error(`❌ Gave up waiting for WhatsApp — alert dropped for ${hostname}`);
-      return;
-    }
-  }
-
-  for (const number of receivers) {
-    const chatId = number.includes("@c.us") ? number : `${number}@c.us`;
-
-    try {
-      const isRegistered = await client.isRegisteredUser(chatId);
-
-      if (!isRegistered) {
-        console.log("❌ Not registered:", chatId);
-        continue;
-      }
-
-      const response = await client.sendMessage(chatId, message, { sendSeen: false });
-      const msgId = response?.id?.id || "unknown_id";
-      console.log(`✅ Sent to ${chatId} (ID: ${msgId})`);
-    } catch (err) {
-      if (err.message && err.message.includes('markedUnread')) {
-        console.log(`✅ Sent to ${chatId} (Success, but ignored known WhatsApp Web parsing bug)`);
-      } else {
-        console.error("❌ Send failed", chatId, err.message);
-      }
-    }
-
-    await new Promise(r => setTimeout(r, SEND_GAP_MS));
-  }
-}
-
-// ------------------------
-// Init + watchdog
-// ------------------------
-
-// Container-wide memory, which includes every Chromium process. cgroup v2 first,
-// v1 as a fallback; returns null when neither is readable (e.g. running outside Docker).
-//
-// The raw usage counter includes reclaimable page cache, which the kernel drops
-// under pressure and is not memory our processes actually hold. Subtract
-// inactive_file, the same way `docker stats` reports it, or a busy filesystem
-// looks like a leak.
-function readStatField(file, field) {
-  try {
-    const line = fs.readFileSync(file, "utf8")
-      .split("\n")
-      .find(l => l.startsWith(field + " "));
-    const value = line ? Number(line.split(/\s+/)[1]) : NaN;
-    return Number.isFinite(value) ? value : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function containerMemoryMB() {
-  const sources = [
-    { usage: "/sys/fs/cgroup/memory.current", stat: "/sys/fs/cgroup/memory.stat", field: "inactive_file" },
-    { usage: "/sys/fs/cgroup/memory/memory.usage_in_bytes", stat: "/sys/fs/cgroup/memory/memory.stat", field: "total_inactive_file" }
-  ];
-
-  for (const { usage, stat, field } of sources) {
-    try {
-      const total = Number(fs.readFileSync(usage, "utf8").trim());
-      if (!Number.isFinite(total) || total <= 0) continue;
-      const cache = readStatField(stat, field);
-      return Math.round(Math.max(total - cache, 0) / 1024 / 1024);
-    } catch { /* try the next one */ }
-  }
-  return null;
-}
-
-let memStrikes = 0;
-let lastMemMB = null;
-
-export function memoryMB() {
-  return lastMemMB;
-}
-
-
 function waitForReady(timeoutMs) {
   return new Promise(resolve => {
     const started = Date.now();
@@ -263,49 +205,91 @@ function waitForReady(timeoutMs) {
   });
 }
 
-function safeInitialize() {
-  if (shuttingDown) return;
-  client.initialize().catch(err => {
-    console.error(`❌ initialize failed: ${err.message} — restarting container in 5s`);
-    ready = false;
-    cleanProfileLocks();
-    setTimeout(() => {
-      process.exit(1);
-    }, 5000);
-  });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+export async function sendMessageToReceivers(hostname, message) {
+  const receivers = getReceivers(hostname);
+
+  if (!receivers.length) {
+    console.log("⚠️ No receivers for:", hostname);
+    return;
+  }
+
+  if (!ready) {
+    console.log(`⏳ WhatsApp not connected - holding alert for ${hostname}`);
+    const becameReady = await waitForReady(READY_WAIT_MS);
+    if (!becameReady) {
+      console.error(`❌ Gave up waiting for WhatsApp - alert dropped for ${hostname}`);
+      return;
+    }
+  }
+
+  for (const number of receivers) {
+    // Accept "91xxxxxxxxxx", "91xxxxxxxxxx@c.us" (old format) or a full JID.
+    const digits = String(number).replace(/@.*$/, "").replace(/\D/g, "");
+
+    try {
+      const [lookup] = await sock.onWhatsApp(digits);
+      if (!lookup?.exists) {
+        console.log("❌ Not registered on WhatsApp:", digits);
+        continue;
+      }
+
+      const sent = await sock.sendMessage(lookup.jid, { text: message });
+      console.log(`✅ Sent to ${digits} (ID: ${sent?.key?.id || "unknown_id"})`);
+    } catch (err) {
+      console.error("❌ Send failed", digits, err.message);
+    }
+
+    await sleep(SEND_GAP_MS);
+  }
 }
 
-// The common failure mode is Node staying alive while the Puppeteer session dies,
-// which `restart: unless-stopped` cannot see. Poll the real state and exit if it
-// stays bad, so Docker restarts us.
-async function watchdogTick() {
+// ------------------------
+// Watchdogs
+// ------------------------
+
+function readStatField(file, field) {
+  try {
+    const line = fs.readFileSync(file, "utf8").split("\n").find(l => l.startsWith(field + " "));
+    const value = line ? Number(line.split(/\s+/)[1]) : NaN;
+    return Number.isFinite(value) ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Container memory minus reclaimable page cache, as `docker stats` reports it.
+function containerMemoryMB() {
+  const sources = [
+    { usage: "/sys/fs/cgroup/memory.current", stat: "/sys/fs/cgroup/memory.stat", field: "inactive_file" },
+    { usage: "/sys/fs/cgroup/memory/memory.usage_in_bytes", stat: "/sys/fs/cgroup/memory/memory.stat", field: "total_inactive_file" }
+  ];
+  for (const { usage, stat, field } of sources) {
+    try {
+      const total = Number(fs.readFileSync(usage, "utf8").trim());
+      if (!Number.isFinite(total) || total <= 0) continue;
+      return Math.round(Math.max(total - readStatField(stat, field), 0) / 1024 / 1024);
+    } catch { /* try the next one */ }
+  }
+  return null;
+}
+
+let memStrikes = 0;
+let lastMemMB = null;
+
+function livenessTick() {
   if (shuttingDown) return;
 
-  if (qrGenerated) {
-    // Waiting on a human to scan — not a fault, don't restart out from under them.
+  if (ready || qrGenerated) {
+    // Connected, or waiting on a human to scan - neither is a fault.
     lastHealthyAt = Date.now();
     return;
   }
 
-  try {
-    const state = await client.getState();
-    if (state === "CONNECTED") {
-      // Connected is not the same as usable: the page helpers that sending
-      // depends on are only injected when the `ready` event fires. Refresh the
-      // health clock here, but leave `ready` to that event.
-      lastHealthyAt = Date.now();
-      return;
-    }
-    console.log("⚠️ WhatsApp state:", state);
-  } catch (err) {
-    console.log("⚠️ Watchdog could not read state:", err.message);
-  }
-
-  ready = false;
   const downMs = Date.now() - lastHealthyAt;
-  const limitMs = everReady ? UNHEALTHY_EXIT_MS : INITIAL_SYNC_GRACE_MS;
-  if (downMs > limitMs) {
-    console.error(`❌ WhatsApp unhealthy for ${Math.round(downMs / 1000)}s — exiting for a container restart`);
+  if (downMs > UNHEALTHY_EXIT_MS) {
+    console.error(`❌ WhatsApp disconnected for ${Math.round(downMs / 1000)}s - exiting for a container restart`);
     process.exit(1);
   }
 }
@@ -314,14 +298,6 @@ function memoryTick() {
   lastMemMB = containerMemoryMB();
   if (lastMemMB === null || !MAX_MEM_MB) return;
 
-  // A fresh link pulls the whole account down and peaks well above steady
-  // state. Restarting for memory during that window just restarts the sync.
-  // Leave it to the hard mem_limit until the first `ready`.
-  if (!everReady) {
-    memStrikes = 0;
-    return;
-  }
-
   if (lastMemMB < MAX_MEM_MB) {
     memStrikes = 0;
     return;
@@ -329,29 +305,36 @@ function memoryTick() {
 
   memStrikes++;
   console.log(`⚠️ Memory ${lastMemMB}MB over limit ${MAX_MEM_MB}MB (strike ${memStrikes}/${MEM_STRIKES_BEFORE_EXIT})`);
-
   if (memStrikes < MEM_STRIKES_BEFORE_EXIT) return;
   if (queueDepth > 0) {
-    console.log("⏳ Holding restart — alerts still queued");
+    console.log("⏳ Holding restart - alerts still queued");
     return;
   }
-
-  console.error(`❌ Memory ${lastMemMB}MB — exiting for a container restart`);
+  console.error(`❌ Memory ${lastMemMB}MB - exiting for a container restart`);
   process.exit(1);
 }
 
+// ------------------------
+// Lifecycle
+// ------------------------
+
 export function initWhatsApp() {
-  safeInitialize();
-  const timer = setInterval(() => { watchdogTick(); memoryTick(); }, WATCHDOG_INTERVAL_MS);
-  timer.unref();
+  connect().catch(err => {
+    console.error("❌ Initial connect failed:", err.message);
+    scheduleReconnect();
+  });
+  setInterval(() => { livenessTick(); memoryTick(); }, WATCHDOG_INTERVAL_MS).unref();
 }
 
 export async function closeWhatsApp() {
   shuttingDown = true;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
   try {
-    await client.destroy();
-    console.log("✅ WhatsApp client closed");
+    // end(), not logout(): logout would invalidate the session on the
+    // WhatsApp side and force a QR re-scan on the next start.
+    sock?.end(undefined);
+    console.log("✅ WhatsApp connection closed");
   } catch (e) {
-    console.log("⚠️ Error closing client:", e.message);
+    console.log("⚠️ Error closing connection:", e.message);
   }
 }

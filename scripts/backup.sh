@@ -5,7 +5,7 @@
 #   - .env                webhook token
 #
 # NOT included, on purpose:
-#   - whatsapp-bot/wwebjs_auth/   the WhatsApp session is a linked *device*.
+#   - whatsapp-bot/auth/   the WhatsApp session is a linked *device*.
 #     Restoring it on a second machine makes two hosts fight over one device
 #     and WhatsApp logs one out. Scan a fresh QR on each machine instead.
 #

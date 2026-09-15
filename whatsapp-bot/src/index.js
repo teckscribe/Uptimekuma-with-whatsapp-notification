@@ -1,6 +1,6 @@
 import express from "express";
-import { watchHostMap, cleanProfileLocks } from "./utils.js";
-import { initWhatsApp, closeWhatsApp, enqueueSend, client, healthSnapshot } from "./whatsapp.js";
+import { watchHostMap } from "./utils.js";
+import { initWhatsApp, closeWhatsApp, enqueueSend, healthSnapshot } from "./whatsapp.js";
 
 const PORT = process.env.PORT || 3000;
 const HOOK_TOKEN = process.env.HOOK_TOKEN || "change_this_token";
@@ -16,7 +16,6 @@ app.use(express.json());
 
 // Initialize systems
 watchHostMap();
-cleanProfileLocks();
 initWhatsApp();
 
 // Graceful shutdown

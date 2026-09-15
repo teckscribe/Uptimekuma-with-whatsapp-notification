@@ -12,7 +12,8 @@
 uptime-kuma-data/
 *.log
 
-# WhatsApp Web authenticated session (Contains session keys, credentials, contact chats)
+# WhatsApp session credentials (a linked device - never share or copy)
+whatsapp-bot/auth/
 whatsapp-bot/wwebjs_auth/
 wwebjs_auth/
 

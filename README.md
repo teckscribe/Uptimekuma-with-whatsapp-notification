@@ -7,7 +7,7 @@ A containerized power and network infrastructure monitoring stack with automated
 ## Architecture Overview
 
 - **`uptime-kuma` (Port 3001)**: Official image pinned to `2.0.2`. Probes network devices and power status via ICMP Ping and HTTP. Alerts are dispatched via webhooks.
-- **`whatsapp-bot` (Port 3000)**: Headless WhatsApp Web client (via Puppeteer & Chromium) that receives Uptime Kuma webhooks, formats incident timestamps in Indian Standard Time (`Asia/Kolkata`), and sends alerts sequentially with queue flood protection.
+- **`whatsapp-bot` (Port 3000)**: WhatsApp client built on [Baileys](https://github.com/WhiskeySockets/Baileys) (direct WebSocket protocol, no browser, ~100MB) that receives Uptime Kuma webhooks, formats incident timestamps in Indian Standard Time (`Asia/Kolkata`), and sends alerts sequentially with queue flood protection.
 - **`whatsapp-ui` (Port 3002)**: Web dashboard for operations teams to dynamically configure which mobile numbers receive alerts for specific monitors.
 
 ---
@@ -36,7 +36,7 @@ A containerized power and network infrastructure monitoring stack with automated
     ├── package.json               # Node.js dependencies
     ├── public/                    # Dashboard web assets
     ├── src/                       # Bot logic and UI backend
-    └── wwebjs_auth/               # (Ignored) Persistent WhatsApp session credentials
+    └── auth/                      # (Ignored) WhatsApp session credentials (a linked device)
 ```
 
 ---
@@ -136,7 +136,7 @@ captured by one script:
 | Kuma login user & settings | `uptime-kuma-data/kuma.db` | ✅ |
 | Site → phone routing | `whatsapp-bot/config/host_map.json` | ✅ |
 | Webhook token | `.env` | ✅ |
-| WhatsApp session | `whatsapp-bot/wwebjs_auth/` | ❌ deliberately — see below |
+| WhatsApp session | `whatsapp-bot/auth/` | ❌ deliberately — see below |
 
 ### Take a backup (on the running machine)
 ```bash
@@ -220,8 +220,7 @@ docker restart uptime-kuma
 
 # Re-link a new WhatsApp number (rescan QR)
 docker compose stop whatsapp-bot
-rm -rf ./whatsapp-bot/wwebjs_auth
-mkdir ./whatsapp-bot/wwebjs_auth
+rm -rf ./whatsapp-bot/auth/*
 docker compose start whatsapp-bot
 docker compose logs -f whatsapp-bot
 ```

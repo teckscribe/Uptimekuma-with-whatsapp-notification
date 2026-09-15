@@ -33,35 +33,22 @@ services:
       - "3000:3000"
     volumes:
       - ./whatsapp-bot/config:/app/config
-      - ./whatsapp-bot/wwebjs_auth:/app/wwebjs_auth
+      # WhatsApp session (a linked device). Never copy this to another machine.
+      - ./whatsapp-bot/auth:/app/auth
     environment:
       - PORT=3000
       - HOOK_TOKEN=${HOOK_TOKEN}
-      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-      - PROTOCOL_TIMEOUT_MS=300000
-      # Restart when the container's total footprint stays above this for 3 minutes.
-      # Measured steady state is ~750MB (mostly the Chromium renderer, which is
-      # irreducible for whatsapp-web.js). 1200 catches genuine drift without
-      # firing on normal fluctuation during initial sync. 0 disables.
-      - MAX_MEM_MB=1200
-      # V8 heap cap for the Chromium renderer. 0 = uncapped. Any cap risks
-      # aborting the renderer during a fresh-link sync, which reloads the page
-      # and restarts the sync in a loop. Steady-state memory is bounded by
-      # MAX_MEM_MB instead.
-      - RENDERER_HEAP_MB=0
-    # Hard ceiling. Steady state is ~600-750MB and MAX_MEM_MB restarts the app
-    # cleanly before this is reached. The gap above MAX_MEM_MB exists for the
-    # initial sync after a fresh QR scan, which peaks past 1200MB and must not
-    # be OOM-killed part-way through. This is a cap, not a reservation.
-    mem_limit: 2g
-    # Equal to mem_limit = no swap for this container.
-    memswap_limit: 2g
+      # Baileys is a plain Node process (~100MB). Restart if it ever drifts
+      # well past that for 3 consecutive minutes. 0 disables.
+      - MAX_MEM_MB=400
+    mem_limit: 512m
+    memswap_limit: 512m
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>r.json()).then(j=>process.exit(j.whatsappReady?0:1)).catch(()=>process.exit(1))"]
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 300s
+      start_period: 90s
     networks:
       - monitoring-network
     depends_on:
