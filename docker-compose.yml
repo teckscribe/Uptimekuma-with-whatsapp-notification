@@ -34,26 +34,25 @@ services:
       - PORT=5000
       - HOOK_TOKEN=${HOOK_TOKEN}
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+      - PROTOCOL_TIMEOUT_MS=300000
       # Restart when the container's total footprint stays above this for 3 minutes.
       # Measured steady state is ~750MB (mostly the Chromium renderer, which is
-      # irreducible for whatsapp-web.js). 1000 catches genuine drift without
-      # firing on normal fluctuation. 0 disables.
-      - MAX_MEM_MB=1000
+      # irreducible for whatsapp-web.js). 1200 catches genuine drift without
+      # firing on normal fluctuation during initial sync. 0 disables.
+      - MAX_MEM_MB=1200
       # V8 heap cap for the Chromium renderer running WhatsApp Web.
-      - RENDERER_HEAP_MB=256
+      - RENDERER_HEAP_MB=512
     # Hard ceiling, sitting just above MAX_MEM_MB so the app restarts itself
-    # cleanly before the kernel OOM-kills it mid-send. The host only has 3.7GB,
-    # so this is deliberately not generous.
-    mem_limit: 1200m
-    # Equal to mem_limit = no swap for this container. The host is already
-    # swapping; letting Chromium in would thrash it.
-    memswap_limit: 1200m
+    # cleanly before the kernel OOM-kills it mid-send.
+    mem_limit: 1500m
+    # Equal to mem_limit = no swap for this container.
+    memswap_limit: 1500m
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/health').then(r=>r.json()).then(j=>process.exit(j.whatsappReady?0:1)).catch(()=>process.exit(1))"]
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 180s
+      start_period: 300s
     networks:
       - monitoring-network
     depends_on:

@@ -12,6 +12,12 @@ const __dirname = path.dirname(__filename);
 const SEND_GAP_MS = Number(process.env.SEND_GAP_MS || 1500);
 const WATCHDOG_INTERVAL_MS = Number(process.env.WATCHDOG_INTERVAL_MS || 60_000);
 const UNHEALTHY_EXIT_MS = Number(process.env.UNHEALTHY_EXIT_MS || 10 * 60_000);
+// After a fresh QR scan WhatsApp Web does a full initial sync before the client
+// becomes usable. That can take far longer than UNHEALTHY_EXIT_MS, so the
+// watchdog gets a longer leash until the first `ready` of this process.
+const INITIAL_SYNC_GRACE_MS = Number(process.env.INITIAL_SYNC_GRACE_MS || 30 * 60_000);
+// How long a queued alert waits for the client to become ready before giving up.
+const READY_WAIT_MS = Number(process.env.READY_WAIT_MS || 15 * 60_000);
 const REINIT_DELAY_MS = 10_000;
 const RETRY_INIT_MS = 30_000;
 
@@ -21,6 +27,7 @@ const RETRY_INIT_MS = 30_000;
 const RENDERER_HEAP_MB = Number(process.env.RENDERER_HEAP_MB || 256);
 const MAX_MEM_MB = Number(process.env.MAX_MEM_MB || 0); // 0 = disabled
 const MEM_STRIKES_BEFORE_EXIT = Number(process.env.MEM_STRIKES_BEFORE_EXIT || 3);
+const PROTOCOL_TIMEOUT_MS = Number(process.env.PROTOCOL_TIMEOUT_MS || 300_000);
 
 export const client = new Client({
   authStrategy: new LocalAuth({
@@ -29,15 +36,13 @@ export const client = new Client({
   }),
   puppeteer: {
     headless: true,
+    protocolTimeout: PROTOCOL_TIMEOUT_MS,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
       "--disable-software-rasterizer",
-      // --- memory trimming: this browser only ever renders one WhatsApp Web tab ---
-      "--renderer-process-limit=1",
-      "--disable-features=site-per-process,TranslateUI,BlinkGenPropertyTrees",
       `--js-flags=--max-old-space-size=${RENDERER_HEAP_MB}`,
       "--disable-extensions",
       "--disable-component-extensions-with-background-pages",
@@ -60,6 +65,7 @@ export const client = new Client({
 
 export let qrGenerated = false;
 export let ready = false;
+let everReady = false;
 let lastHealthyAt = Date.now();
 let shuttingDown = false;
 
@@ -84,6 +90,9 @@ client.on("qr", qr => {
 client.on("authenticated", () => {
   console.log("✅ WhatsApp authenticated");
   qrGenerated = false;
+  // Sync starts now. Give it the full grace window from this point.
+  lastHealthyAt = Date.now();
+  if (!everReady) console.log("⏳ Waiting for WhatsApp Web to finish syncing — this can take several minutes on a fresh link");
 });
 
 client.on("auth_failure", msg => {
@@ -95,13 +104,12 @@ client.on("auth_failure", msg => {
   setTimeout(safeInitialize, REINIT_DELAY_MS);
 });
 
-client.on("ready", async () => {
+client.on("ready", () => {
   console.log("✅ WhatsApp client READY");
   ready = true;
+  everReady = true;
   qrGenerated = false;
   lastHealthyAt = Date.now();
-  await client.getContacts();
-  console.log("📦 WhatsApp store synced");
 });
 
 client.on("disconnected", reason => {
@@ -141,7 +149,15 @@ export async function sendMessageToReceivers(hostname, message) {
   }
 
   if (!ready) {
-    console.log("⚠️ WhatsApp not ready — attempting send anyway for:", hostname);
+    // Sending before `ready` fails with "Cannot read properties of undefined
+    // (reading 'getChat')" — the page helpers aren't injected yet. Hold the
+    // alert until the client is usable rather than dropping it.
+    console.log(`⏳ WhatsApp not ready — holding alert for ${hostname}`);
+    const becameReady = await waitForReady(READY_WAIT_MS);
+    if (!becameReady) {
+      console.error(`❌ Gave up waiting for WhatsApp — alert dropped for ${hostname}`);
+      return;
+    }
   }
 
   for (const number of receivers) {
@@ -218,13 +234,25 @@ export function memoryMB() {
 }
 
 
+function waitForReady(timeoutMs) {
+  return new Promise(resolve => {
+    const started = Date.now();
+    const poll = setInterval(() => {
+      if (ready) { clearInterval(poll); resolve(true); }
+      else if (shuttingDown || Date.now() - started > timeoutMs) { clearInterval(poll); resolve(false); }
+    }, 2000);
+  });
+}
+
 function safeInitialize() {
   if (shuttingDown) return;
   client.initialize().catch(err => {
-    console.error(`❌ initialize failed: ${err.message} — retrying in ${RETRY_INIT_MS / 1000}s`);
+    console.error(`❌ initialize failed: ${err.message} — restarting container in 5s`);
     ready = false;
     cleanProfileLocks();
-    setTimeout(safeInitialize, RETRY_INIT_MS);
+    setTimeout(() => {
+      process.exit(1);
+    }, 5000);
   });
 }
 
@@ -254,7 +282,8 @@ async function watchdogTick() {
 
   ready = false;
   const downMs = Date.now() - lastHealthyAt;
-  if (downMs > UNHEALTHY_EXIT_MS) {
+  const limitMs = everReady ? UNHEALTHY_EXIT_MS : INITIAL_SYNC_GRACE_MS;
+  if (downMs > limitMs) {
     console.error(`❌ WhatsApp unhealthy for ${Math.round(downMs / 1000)}s — exiting for a container restart`);
     process.exit(1);
   }
