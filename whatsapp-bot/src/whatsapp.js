@@ -23,7 +23,11 @@ const REINIT_DELAY_MS = 10_000;
 // Memory guard. Chromium's WhatsApp Web renderer grows steadily over days; when the
 // container's total footprint stays above MAX_MEM_MB we exit so Docker restarts us.
 // The session lives in wwebjs_auth, so a restart costs ~30s and no QR re-scan.
-const RENDERER_HEAP_MB = Number(process.env.RENDERER_HEAP_MB || 256);
+// V8 heap cap for the WhatsApp Web renderer. 0 (default) = no cap. A cap
+// saves a little in steady state but a fresh-link sync of a real account can
+// exceed it, and when V8 hits the ceiling it aborts the renderer: the page
+// reloads, the sync restarts from zero, and the bot never reaches ready.
+const RENDERER_HEAP_MB = Number(process.env.RENDERER_HEAP_MB || 0);
 const MAX_MEM_MB = Number(process.env.MAX_MEM_MB || 0); // 0 = disabled
 const MEM_STRIKES_BEFORE_EXIT = Number(process.env.MEM_STRIKES_BEFORE_EXIT || 3);
 const PROTOCOL_TIMEOUT_MS = Number(process.env.PROTOCOL_TIMEOUT_MS || 300_000);
@@ -42,7 +46,7 @@ export const client = new Client({
       "--disable-dev-shm-usage",
       "--disable-gpu",
       "--disable-software-rasterizer",
-      `--js-flags=--max-old-space-size=${RENDERER_HEAP_MB}`,
+      ...(RENDERER_HEAP_MB > 0 ? [`--js-flags=--max-old-space-size=${RENDERER_HEAP_MB}`] : []),
       "--disable-extensions",
       "--disable-component-extensions-with-background-pages",
       "--disable-default-apps",
