@@ -19,7 +19,7 @@ RUN npm ci --omit=dev
 COPY --chown=1000:1000 src ./src
 COPY --chown=1000:1000 host_map*.json ./
 
-EXPOSE 5000
+EXPOSE 3000
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

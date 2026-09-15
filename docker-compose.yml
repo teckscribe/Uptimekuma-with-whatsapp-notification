@@ -10,13 +10,13 @@ services:
     container_name: uptime-kuma
     restart: unless-stopped
     ports:
-      - "5001:5001"
+      - "3001:3001"
     volumes:
       - ./uptime-kuma-data:/app/data
     environment:
       - PUID=1000
       - PGID=1000
-      - UPTIME_KUMA_PORT=5001
+      - UPTIME_KUMA_PORT=3001
     networks:
       - monitoring-network
     logging: *default-logging
@@ -26,12 +26,12 @@ services:
     container_name: whatsapp-bot
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "3000:3000"
     volumes:
       - ./whatsapp-bot/host_map.json:/app/host_map.json
       - ./whatsapp-bot/wwebjs_auth:/app/wwebjs_auth
     environment:
-      - PORT=5000
+      - PORT=3000
       - HOOK_TOKEN=${HOOK_TOKEN}
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
       - PROTOCOL_TIMEOUT_MS=300000
@@ -48,7 +48,7 @@ services:
     # Equal to mem_limit = no swap for this container.
     memswap_limit: 1500m
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/health').then(r=>r.json()).then(j=>process.exit(j.whatsappReady?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>r.json()).then(j=>process.exit(j.whatsappReady?0:1)).catch(()=>process.exit(1))"]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -67,14 +67,14 @@ services:
     user: "1000:1000"
     restart: unless-stopped
     ports:
-      - "5002:5002"
+      - "3002:3002"
     volumes:
       - ./whatsapp-bot/host_map.json:/app/host_map.json
     environment:
-      - UI_PORT=5002
+      - UI_PORT=3002
     mem_limit: 128m
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 60s
       timeout: 10s
       retries: 3
