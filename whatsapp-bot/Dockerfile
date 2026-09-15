@@ -11,13 +11,12 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 WORKDIR /app
 
-RUN mkdir -p /app/wwebjs_auth && chown -R 1000:1000 /app
+RUN mkdir -p /app/wwebjs_auth /app/config && chown -R 1000:1000 /app
 
 COPY --chown=1000:1000 package*.json ./
 RUN npm ci --omit=dev
 
 COPY --chown=1000:1000 src ./src
-COPY --chown=1000:1000 host_map*.json ./
 
 EXPOSE 3000
 

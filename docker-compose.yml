@@ -6,7 +6,13 @@ x-logging: &default-logging
 
 services:
   uptime-kuma:
-    build: ./uptime-kuma
+    # Pinned to the exact release that wrote the data in uptime-kuma-data/.
+    # Do not bump this without a fresh backup: the SQLite schema migrates
+    # forward on start and cannot be rolled back.
+    #
+    # If this tag ever disappears from Docker Hub, load the saved copy:
+    #   ./scripts/load-image.sh    (reads images/uptime-kuma-2.0.2.tar.gz)
+    image: ${UPTIME_KUMA_IMAGE:-louislam/uptime-kuma:2.0.2}
     container_name: uptime-kuma
     restart: unless-stopped
     ports:
@@ -14,8 +20,6 @@ services:
     volumes:
       - ./uptime-kuma-data:/app/data
     environment:
-      - PUID=1000
-      - PGID=1000
       - UPTIME_KUMA_PORT=3001
     networks:
       - monitoring-network
@@ -28,7 +32,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./whatsapp-bot/host_map.json:/app/host_map.json
+      - ./whatsapp-bot/config:/app/config
       - ./whatsapp-bot/wwebjs_auth:/app/wwebjs_auth
     environment:
       - PORT=3000
@@ -69,7 +73,7 @@ services:
     ports:
       - "3002:3002"
     volumes:
-      - ./whatsapp-bot/host_map.json:/app/host_map.json
+      - ./whatsapp-bot/config:/app/config
     environment:
       - UI_PORT=3002
     mem_limit: 128m

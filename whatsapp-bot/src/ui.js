@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const UI_PORT = process.env.UI_PORT || 3002;
-const HOST_MAP_PATH = "/app/host_map.json";
+const HOST_MAP_PATH = process.env.HOST_MAP_PATH || "/app/config/host_map.json";
 
 const app = express();
 app.use(express.json());

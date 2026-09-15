@@ -1,1 +1,0 @@
-const a="Sprach",e="Dahoam",t="Wos für a Datenbank wuist du?",s="Da brauchst nix mocha. Des Docker Buidl hod a Datenbank dabai und nimmt MariaDB. Uptime Kuma verbint se mit Unix Socket.",o={Language:a,Home:e,setupDatabaseChooseDatabase:t,setupDatabaseEmbeddedMariaDB:s};export{e as Home,a as Language,o as default,t as setupDatabaseChooseDatabase,s as setupDatabaseEmbeddedMariaDB};

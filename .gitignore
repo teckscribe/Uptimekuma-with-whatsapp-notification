@@ -17,7 +17,12 @@ whatsapp-bot/wwebjs_auth/
 wwebjs_auth/
 
 # Real routing table (Contains real phone numbers & infrastructure site names)
+whatsapp-bot/config/host_map.json
 whatsapp-bot/host_map.json
+
+# Saved Docker images (too large for git; keep with your backups)
+images/
+backups/
 
 # Node dependencies
 node_modules/

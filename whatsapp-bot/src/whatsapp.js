@@ -19,7 +19,6 @@ const INITIAL_SYNC_GRACE_MS = Number(process.env.INITIAL_SYNC_GRACE_MS || 30 * 6
 // How long a queued alert waits for the client to become ready before giving up.
 const READY_WAIT_MS = Number(process.env.READY_WAIT_MS || 15 * 60_000);
 const REINIT_DELAY_MS = 10_000;
-const RETRY_INIT_MS = 30_000;
 
 // Memory guard. Chromium's WhatsApp Web renderer grows steadily over days; when the
 // container's total footprint stays above MAX_MEM_MB we exit so Docker restarts us.
@@ -100,8 +99,7 @@ client.on("auth_failure", msg => {
   ready = false;
   // The stored session is no longer valid — a fresh QR scan is required.
   // Re-initialize so the QR is emitted to the logs instead of sitting idle.
-  cleanProfileLocks();
-  setTimeout(safeInitialize, REINIT_DELAY_MS);
+  scheduleReinit();
 });
 
 client.on("ready", () => {
@@ -115,9 +113,26 @@ client.on("ready", () => {
 client.on("disconnected", reason => {
   console.log("⚠️ WhatsApp disconnected — reconnecting...", reason || "");
   ready = false;
-  cleanProfileLocks();
-  setTimeout(safeInitialize, REINIT_DELAY_MS);
+  scheduleReinit();
 });
+
+// `disconnected` and `auth_failure` can both fire for one event. Two overlapping
+// initialize() calls launch two Chromiums on the same profile, which never
+// reaches `ready`. Coalesce them so only one reinit is ever pending.
+let reinitTimer = null;
+
+function scheduleReinit() {
+  if (shuttingDown) return;
+  if (reinitTimer) {
+    console.log("ℹ️ Reinit already scheduled — skipping duplicate");
+    return;
+  }
+  cleanProfileLocks();
+  reinitTimer = setTimeout(() => {
+    reinitTimer = null;
+    safeInitialize();
+  }, REINIT_DELAY_MS);
+}
 
 // ------------------------
 // Send queue
