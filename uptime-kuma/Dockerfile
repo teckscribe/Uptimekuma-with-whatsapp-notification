@@ -1,26 +1,16 @@
 # ==============================================================================
-# Multi-stage Dockerfile for Uptime Kuma (Standalone / Independent of 3rd party)
+# Standalone Dockerfile for Uptime Kuma v2.0.2
+# Uses pre-bundled dist frontend assets for instant, reliable builds
 # ==============================================================================
 
-# Stage 1: Build frontend
-FROM node:20-bookworm-slim AS builder
-WORKDIR /app
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
-
-COPY package.json package-lock.json ./
-RUN npm ci
-
-COPY . .
-RUN npm run build
-
-# Stage 2: Production release
-FROM node:20-bookworm-slim AS release
+FROM node:20-bookworm-slim
 WORKDIR /app
 
 ENV UPTIME_KUMA_IS_CONTAINER=1
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
 ENV NODE_ENV=production
 
+# Install essential runtime tools for monitoring (ping, curl, init)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         iputils-ping \
@@ -29,15 +19,12 @@ RUN apt-get update && \
         dumb-init && \
     rm -rf /var/lib/apt/lists/*
 
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# Copy package files and .npmrc (which contains legacy-peer-deps=true)
+COPY .npmrc package.json package-lock.json ./
+RUN npm ci --omit=dev --legacy-peer-deps
 
-COPY --from=builder /app/dist /app/dist
-COPY --from=builder /app/server /app/server
-COPY --from=builder /app/db /app/db
-COPY --from=builder /app/src /app/src
-COPY --from=builder /app/extra /app/extra
-COPY --from=builder /app/index.html /app/index.html
+# Copy application assets and pre-bundled frontend dist
+COPY . .
 
 RUN mkdir -p /app/data && chown -R node:node /app
 
