@@ -33,7 +33,11 @@ const MAX_RECONNECT_DELAY_MS = 30_000;
 const MAX_MEM_MB = Number(process.env.MAX_MEM_MB || 0); // 0 = disabled
 const MEM_STRIKES_BEFORE_EXIT = Number(process.env.MEM_STRIKES_BEFORE_EXIT || 3);
 
-const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "warn" });
+// Baileys' internal logger is silent by default: our own connection lines
+// cover what matters, and its "error" level includes routine noise such as
+// the post-pairing 515 restart and undecryptable incoming messages (which a
+// send-only bot ignores). Set BAILEYS_LOG_LEVEL=warn or debug to dig in.
+const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "silent" });
 
 let sock = null;
 export let ready = false;
