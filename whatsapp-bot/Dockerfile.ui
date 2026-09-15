@@ -13,7 +13,7 @@ RUN npm ci --omit=dev
 
 COPY --chown=1000:1000 src/ui.js ./
 COPY --chown=1000:1000 public ./public
-EXPOSE 3002
+EXPOSE 5002
 
 USER 1000
 

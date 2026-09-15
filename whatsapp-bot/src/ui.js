@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const UI_PORT = process.env.UI_PORT || 3002;
+const UI_PORT = process.env.UI_PORT || 5002;
 const HOST_MAP_PATH = "/app/host_map.json";
 
 const app = express();

@@ -2,7 +2,7 @@ import express from "express";
 import { watchHostMap, cleanProfileLocks } from "./utils.js";
 import { initWhatsApp, closeWhatsApp, enqueueSend, client, healthSnapshot } from "./whatsapp.js";
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 const HOOK_TOKEN = process.env.HOOK_TOKEN || "change_this_token";
 
 // Uptime Kuma heartbeat status codes

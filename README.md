@@ -6,9 +6,9 @@ A containerized power and network infrastructure monitoring stack with automated
 
 ## Architecture Overview
 
-- **`uptime-kuma` (Port 3001)**: Built directly from source. Probes network devices and power status via ICMP Ping and HTTP. Alerts are dispatched via webhooks.
-- **`whatsapp-bot` (Port 3000)**: Headless WhatsApp Web client (via Puppeteer & Chromium) that receives Uptime Kuma webhooks, formats incident timestamps in Indian Standard Time (`Asia/Kolkata`), and sends alerts sequentially with queue flood protection.
-- **`whatsapp-ui` (Port 3002)**: Web dashboard for operations teams to dynamically configure which mobile numbers receive alerts for specific monitors.
+- **`uptime-kuma` (Port 5001)**: Built directly from source. Probes network devices and power status via ICMP Ping and HTTP. Alerts are dispatched via webhooks.
+- **`whatsapp-bot` (Port 5000)**: Headless WhatsApp Web client (via Puppeteer & Chromium) that receives Uptime Kuma webhooks, formats incident timestamps in Indian Standard Time (`Asia/Kolkata`), and sends alerts sequentially with queue flood protection.
+- **`whatsapp-ui` (Port 5002)**: Web dashboard for operations teams to dynamically configure which mobile numbers receive alerts for specific monitors.
 
 ---
 
@@ -86,10 +86,10 @@ To pair the bot with your WhatsApp account:
 ## Configuring Uptime Kuma
 
 ### Webhook Notification Setup
-1. Open Uptime Kuma in your browser at `http://<server-ip>:3001`.
+1. Open Uptime Kuma in your browser at `http://<server-ip>:5001`.
 2. Navigate to **Settings** $\rightarrow$ **Notifications** $\rightarrow$ **Setup Notification**.
 3. Select **Webhook** and configure:
-   - **Post URL**: `http://whatsapp-bot:3000/uptime-kuma`
+   - **Post URL**: `http://whatsapp-bot:5000/uptime-kuma`
    - **Custom Headers**:
      ```json
      {
@@ -108,7 +108,7 @@ To keep the SQLite database fast and prevent lock timeouts:
 
 ## Managing Routing in the Web Dashboard
 
-Open the routing dashboard at `http://<server-ip>:3002`.
+Open the routing dashboard at `http://<server-ip>:5002`.
 - You can add or modify monitor hostnames and assign comma-separated mobile numbers (format: country code + number, e.g. `919876543210`).
 - Changes take effect dynamically without restarting the bot.
 
