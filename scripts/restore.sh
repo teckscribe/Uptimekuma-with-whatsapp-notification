@@ -42,6 +42,13 @@ done
 echo "📦 Extracting $ARCHIVE..."
 tar -xzf "$ARCHIVE"
 
+# Backups taken before the config/ layout have host_map.json one level up.
+if [ -f whatsapp-bot/host_map.json ] && [ ! -f whatsapp-bot/config/host_map.json ]; then
+  mkdir -p whatsapp-bot/config
+  mv whatsapp-bot/host_map.json whatsapp-bot/config/host_map.json
+  echo "↪  Moved host_map.json from the old location into whatsapp-bot/config/"
+fi
+
 # Kuma and the bot run as UID 1000 inside their containers.
 if command -v chown >/dev/null; then
   chown -R 1000:1000 uptime-kuma-data whatsapp-bot/config 2>/dev/null || \
