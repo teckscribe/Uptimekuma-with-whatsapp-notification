@@ -44,8 +44,11 @@ services:
       # irreducible for whatsapp-web.js). 1200 catches genuine drift without
       # firing on normal fluctuation during initial sync. 0 disables.
       - MAX_MEM_MB=1200
-      # V8 heap cap for the Chromium renderer running WhatsApp Web.
-      - RENDERER_HEAP_MB=512
+      # V8 heap cap for the Chromium renderer. 0 = uncapped. Any cap risks
+      # aborting the renderer during a fresh-link sync, which reloads the page
+      # and restarts the sync in a loop. Steady-state memory is bounded by
+      # MAX_MEM_MB instead.
+      - RENDERER_HEAP_MB=0
     # Hard ceiling. Steady state is ~600-750MB and MAX_MEM_MB restarts the app
     # cleanly before this is reached. The gap above MAX_MEM_MB exists for the
     # initial sync after a fresh QR scan, which peaks past 1200MB and must not
