@@ -16,7 +16,8 @@ RUN apt-get update && \
         iputils-ping \
         curl \
         ca-certificates \
-        dumb-init && \
+        dumb-init \
+        gosu && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy package files and .npmrc (which contains legacy-peer-deps=true)
@@ -28,11 +29,13 @@ COPY . .
 
 RUN mkdir -p /app/data && chown -R node:node /app
 
-USER node
 EXPOSE 5001
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:5001/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "server/server.js"]
