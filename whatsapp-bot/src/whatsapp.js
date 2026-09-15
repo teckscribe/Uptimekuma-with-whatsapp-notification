@@ -308,6 +308,14 @@ function memoryTick() {
   lastMemMB = containerMemoryMB();
   if (lastMemMB === null || !MAX_MEM_MB) return;
 
+  // A fresh link pulls the whole account down and peaks well above steady
+  // state. Restarting for memory during that window just restarts the sync.
+  // Leave it to the hard mem_limit until the first `ready`.
+  if (!everReady) {
+    memStrikes = 0;
+    return;
+  }
+
   if (lastMemMB < MAX_MEM_MB) {
     memStrikes = 0;
     return;

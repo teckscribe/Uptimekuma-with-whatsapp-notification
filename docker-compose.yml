@@ -46,11 +46,13 @@ services:
       - MAX_MEM_MB=1200
       # V8 heap cap for the Chromium renderer running WhatsApp Web.
       - RENDERER_HEAP_MB=512
-    # Hard ceiling, sitting just above MAX_MEM_MB so the app restarts itself
-    # cleanly before the kernel OOM-kills it mid-send.
-    mem_limit: 1500m
+    # Hard ceiling. Steady state is ~600-750MB and MAX_MEM_MB restarts the app
+    # cleanly before this is reached. The gap above MAX_MEM_MB exists for the
+    # initial sync after a fresh QR scan, which peaks past 1200MB and must not
+    # be OOM-killed part-way through. This is a cap, not a reservation.
+    mem_limit: 2g
     # Equal to mem_limit = no swap for this container.
-    memswap_limit: 1500m
+    memswap_limit: 2g
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>r.json()).then(j=>process.exit(j.whatsappReady?0:1)).catch(()=>process.exit(1))"]
       interval: 60s
