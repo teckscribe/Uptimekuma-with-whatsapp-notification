@@ -286,7 +286,9 @@ async function watchdogTick() {
   try {
     const state = await client.getState();
     if (state === "CONNECTED") {
-      ready = true;
+      // Connected is not the same as usable: the page helpers that sending
+      // depends on are only injected when the `ready` event fires. Refresh the
+      // health clock here, but leave `ready` to that event.
       lastHealthyAt = Date.now();
       return;
     }

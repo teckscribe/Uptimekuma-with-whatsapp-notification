@@ -101,7 +101,7 @@ app.get("/health", (req, res) => {
   const snapshot = healthSnapshot();
   res.json({
     status: snapshot.ready ? "ok" : "degraded",
-    whatsappReady: snapshot.ready && !!client.info,
+    whatsappReady: snapshot.ready,
     ...snapshot,
     time: new Date().toISOString()
   });
