@@ -59,7 +59,13 @@ Edit `.env`:
 HOOK_TOKEN=your_secure_random_token_here
 ```
 
-### 3. Initialize the Notification Routing Table
+### 3. Pre-create Data Directories (Prevents Permission/Lock Issues)
+Create the persistent volume folders before starting Docker so they are owned by your standard user account rather than `root`:
+```bash
+mkdir -p uptime-kuma-data whatsapp-bot/config whatsapp-bot/auth
+```
+
+### 4. Initialize the Notification Routing Table
 
 **Restoring from a backup** — copy your saved routing table into place:
 ```bash
@@ -76,7 +82,7 @@ missing at first start, the bot seeds one from the example and logs a warning;
 dropping your real `host_map.json` into `whatsapp-bot/config/` at any later
 point is picked up automatically within a few seconds — no restart needed.
 
-### 4. Build and Start the Stack
+### 5. Build and Start the Stack
 ```bash
 docker compose up -d --build
 ```
