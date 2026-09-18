@@ -1,26 +1,127 @@
-docker restart whatsapp-bot
+# ==============================================================================
+# DOCKER STACK: UPSTREAM DEPLOYMENT & MAINTENANCE GUIDE (UBUNTU 24.04)
+# ==============================================================================
 
+# ------------------------------------------------------------------------------
+# 1. SYSTEM PREREQUISITES & DOCKER INSTALLATION (FRESH UBUNTU 24.04)
+# ------------------------------------------------------------------------------
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git curl
+
+# Install Docker Engine & Compose plugin via official script
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Allow standard user to run Docker without sudo
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Verify installation
+docker --version
+docker compose version
+
+
+# ------------------------------------------------------------------------------
+# 2. CLONE THE REPOSITORY
+# ------------------------------------------------------------------------------
+cd ~
+git clone https://github.com/teckscribe/Uptimekuma-with-whatsapp-notification.git docker-stack
+cd ~/docker-stack
+
+
+# ------------------------------------------------------------------------------
+# 3. PRE-CREATE DATA DIRECTORIES (CRITICAL: PREVENTS ROOT LOCK/PADLOCK ISSUES)
+# ------------------------------------------------------------------------------
+# Pre-creating volume folders under your user account ensures they are owned
+# by $USER:$USER (UID 1000) instead of root, avoiding GUI lock badges and EACCES errors.
+mkdir -p uptime-kuma-data whatsapp-bot/config whatsapp-bot/auth
+
+
+# ------------------------------------------------------------------------------
+# 4. CONFIGURE ENVIRONMENT SECRETS
+# ------------------------------------------------------------------------------
+cp .env.example .env
+nano .env
+# Set your secure webhook token:
+# HOOK_TOKEN=your_secure_random_token_here
+
+
+# ------------------------------------------------------------------------------
+# 5. INITIALIZE PHONE NUMBER ROUTING (host_map.json)
+# ------------------------------------------------------------------------------
+# Option A: If starting fresh
+cp whatsapp-bot/config/host_map.example.json whatsapp-bot/config/host_map.json
+nano whatsapp-bot/config/host_map.json
+
+# Option B: If restoring from backup
+# cp /path/to/backup/host_map.json whatsapp-bot/config/host_map.json
+
+
+# ------------------------------------------------------------------------------
+# 6. BUILD AND START ALL CONTAINERS
+# ------------------------------------------------------------------------------
+cd ~/docker-stack
+docker compose up -d --build
+
+# Verify all containers are running
+docker compose ps
+
+
+# ------------------------------------------------------------------------------
+# 7. AUTHENTICATE WHATSAPP (SCAN QR CODE)
+# ------------------------------------------------------------------------------
+docker compose logs -f whatsapp-bot
+# Open WhatsApp on your phone -> Settings/Menu -> Linked Devices -> Link a Device
+# Scan the QR code displayed in the terminal.
+# Wait until you see: "✅ WhatsApp client READY"
+# Press Ctrl+C to exit logs (container stays running).
+
+
+# ------------------------------------------------------------------------------
+# 8. SERVICE ACCESS URLS & CONFIGURATION
+# ------------------------------------------------------------------------------
+# Uptime Kuma Dashboard: http://<server-ip>:3001
+#   1. Set up initial admin account.
+#   2. Go to Settings -> Notifications -> Setup Notification -> Webhook:
+#        - Post URL: http://whatsapp-bot:3000/uptime-kuma
+#        - Header: {"x-hook-token": "your_secure_random_token_here"}
+#        - Test and Save.
+#   3. Go to Settings -> General:
+#        - Monitor History Retention (days): 90
+#
+# WhatsApp Routing UI:  http://<server-ip>:3002
+#   - Dynamically manage monitor names and recipient mobile numbers.
+
+
+# ==============================================================================
+# COMMON MAINTENANCE & TROUBLESHOOTING COMMANDS
+# ==============================================================================
+
+# Fix folder lock / permission issues if created as root:
+sudo chown -R $USER:$USER ~/docker-stack/uptime-kuma-data ~/docker-stack/whatsapp-bot/config ~/docker-stack/whatsapp-bot/auth
+
+# View live container logs:
+docker compose logs -f whatsapp-bot
+docker compose logs -f uptime-kuma
+docker compose logs -f whatsapp-ui
+
+# Restart individual services:
+docker restart whatsapp-bot
+docker restart uptime-kuma
 docker restart whatsapp-ui
 
-docker restart uptime-kuma
-
-
-docker compose logs -f whatsapp-bot
-
-
-#--------To rescan the Qr code ----------
-
-cd ~/docker-stack
+# Re-scan WhatsApp QR Code (clearing saved session):
 docker compose stop whatsapp-bot
-rm -rf ./whatsapp-bot/auth/*
+rm -rf ~/docker-stack/whatsapp-bot/auth/*
 docker compose start whatsapp-bot
-
-#To get the QR Code
-
 docker compose logs -f whatsapp-bot
 
-#To fix permissions if required:
+# Stop the entire stack:
+docker compose down
 
-sudo chown -R $USER:$USER ~/docker-stack/whatsapp-bot/auth
+# Start the stack:
+docker compose up -d
 
+# Completely wipe containers and images for fresh reinstall:
+docker compose down -v --rmi local
 
