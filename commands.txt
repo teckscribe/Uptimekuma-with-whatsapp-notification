@@ -122,6 +122,24 @@ docker compose down
 # Start the stack:
 docker compose up -d
 
-# Completely wipe containers and images for fresh reinstall:
-docker compose down -v --rmi local
+# ------------------------------------------------------------------------------
+# RESET / REMOVE EXISTING CONFIG & FREE UP DISK SPACE
+# ------------------------------------------------------------------------------
+# 1. Stop and remove containers, networks, volumes, and images:
+cd ~/docker-stack
+docker compose down -v --rmi all
+
+# 2. Remove persistent database, session tokens, and local configuration:
+# CAUTION: This deletes Uptime Kuma history, WhatsApp auth, and routing maps.
+rm -rf ~/docker-stack/uptime-kuma-data/
+rm -rf ~/docker-stack/whatsapp-bot/auth/*
+rm -f ~/docker-stack/whatsapp-bot/config/host_map.json
+rm -f ~/docker-stack/.env
+
+# 3. Reclaim disk space by purging Docker build cache and unused image layers:
+docker builder prune -a -f
+docker image prune -a -f
+
+# (Optional) Completely remove the project folder from your system:
+# cd ~ && rm -rf ~/docker-stack
 
