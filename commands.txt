@@ -100,6 +100,10 @@ docker compose logs -f whatsapp-bot
 # Fix folder lock / permission issues if created as root:
 sudo chown -R $USER:$USER ~/docker-stack/uptime-kuma-data ~/docker-stack/whatsapp-bot/config ~/docker-stack/whatsapp-bot/auth
 
+# Apply Web Interface Branding to 'Host Uptime Monitor':
+./scripts/set-branding.sh
+docker restart uptime-kuma
+
 # View live container logs:
 docker compose logs -f whatsapp-bot
 docker compose logs -f uptime-kuma
