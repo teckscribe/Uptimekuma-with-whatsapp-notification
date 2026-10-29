@@ -91,8 +91,15 @@ docker compose up -d --build
 
 ## Pairing WhatsApp
 
-To pair the bot with your WhatsApp account:
+You can pair or switch the WhatsApp sender account directly from the **Web Dashboard** (recommended) or from the **Terminal CLI**:
 
+### Option A: Via Web Dashboard (`http://<server-ip>:3002`)
+1. Open `http://<server-ip>:3002` in your browser and switch to the **WhatsApp QR & Auth** tab.
+2. Open WhatsApp on your phone $\rightarrow$ **Linked Devices** $\rightarrow$ **Link a Device**.
+3. Scan the live QR code displayed on the page. Once linked, the status badge turns green (**Connected**).
+4. To switch to a different WhatsApp number later, click **Disconnect / Switch Phone** right in the web tab.
+
+### Option B: Via Terminal CLI
 1. View the container logs to display the terminal QR code:
    ```bash
    docker compose logs -f whatsapp-bot

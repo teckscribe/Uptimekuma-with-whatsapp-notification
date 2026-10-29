@@ -70,8 +70,15 @@ docker compose ps
 # ------------------------------------------------------------------------------
 # 7. AUTHENTICATE WHATSAPP (SCAN QR CODE)
 # ------------------------------------------------------------------------------
+# Option A (Recommended - Web UI):
+#   1. Open http://<server-ip>:3002 in your browser.
+#   2. Click the "WhatsApp QR & Auth" tab.
+#   3. Open WhatsApp on your phone -> Settings/Menu -> Linked Devices -> Link a Device.
+#   4. Scan the QR code shown directly on the web page (or click "Disconnect / Switch Phone"
+#      to link a different number without needing CLI or sudo commands).
+#
+# Option B (Terminal / CLI):
 docker compose logs -f whatsapp-bot
-# Open WhatsApp on your phone -> Settings/Menu -> Linked Devices -> Link a Device
 # Scan the QR code displayed in the terminal.
 # Wait until you see: "✅ WhatsApp client READY"
 # Press Ctrl+C to exit logs (container stays running).
