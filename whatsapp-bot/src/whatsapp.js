@@ -14,10 +14,15 @@ import {
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 import qrcode from "qrcode-terminal";
+import { createRequire } from "module";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { getReceivers } from "./utils.js";
+
+const require = createRequire(import.meta.url);
+const QRCode = require("qrcode-terminal/vendor/QRCode/index.js");
+const QRErrorCorrectLevel = require("qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel.js");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,13 +47,55 @@ const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "silent" });
 let sock = null;
 export let ready = false;
 export let qrGenerated = false;
+let currentQrDataUrl = null;
+let lastQrAt = 0;
 let connectedAs = null;
+let statusUpdatedAt = new Date().toLocaleString("en-GB", { timeZone: "Asia/Kolkata" });
+let lastErrorMessage = null;
+let manualPause = false;
 let lastHealthyAt = Date.now();
 let shuttingDown = false;
 let connecting = false;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let reconnectAllowed = true;
+
+function nowIST() {
+  return new Date().toLocaleString("en-GB", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+}
+
+function qrToSvgDataUrl(qrText) {
+  try {
+    const qr = new QRCode(-1, QRErrorCorrectLevel.L);
+    qr.addData(qrText);
+    qr.make();
+    const count = qr.getModuleCount();
+    const margin = 4;
+    const total = count + margin * 2;
+    let paths = "";
+    for (let r = 0; r < count; r++) {
+      for (let c = 0; c < count; c++) {
+        if (qr.modules[r][c]) {
+          paths += `M${c + margin},${r + margin}h1v1h-1z`;
+        }
+      }
+    }
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${total} ${total}" shape-rendering="crispEdges"><rect width="${total}" height="${total}" fill="#ffffff"/><path d="${paths}" fill="#000000"/></svg>`;
+    return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+  } catch (err) {
+    console.error("⚠️ Failed to generate QR SVG:", err.message);
+    return null;
+  }
+}
 
 export function healthSnapshot() {
   return {
@@ -59,6 +106,41 @@ export function healthSnapshot() {
     memoryMB: lastMemMB,
     memoryLimitMB: MAX_MEM_MB || null,
     queued: queueDepth
+  };
+}
+
+export function whatsappAuthStatus() {
+  let status = "disconnected";
+  let message = "No active WhatsApp session. Click 'Connect / Scan QR Code' to link a phone.";
+
+  if (ready) {
+    status = "authenticated";
+    message = connectedAs
+      ? `Connected & Paired as +${connectedAs}. Incident alerts will be dispatched through this linked account.`
+      : "Connected & Paired. Incident alerts will be dispatched through this linked account.";
+  } else if (qrGenerated && currentQrDataUrl) {
+    status = "needs_scan";
+    message = "QR Code ready. Open WhatsApp on your phone -> Linked Devices -> Link a Device.";
+  } else if (manualPause) {
+    status = "disconnected";
+    message = "QR scan paused. Click 'Connect / Scan QR Code' to generate a fresh QR code.";
+  } else if (lastErrorMessage && !reconnectAllowed) {
+    status = "error";
+    message = lastErrorMessage;
+  } else if (connecting || reconnectTimer || reconnectAllowed) {
+    status = "starting";
+    message = "Connecting to WhatsApp WebSocket and preparing QR code...";
+  }
+
+  return {
+    status,
+    ready,
+    qr_available: Boolean(qrGenerated && currentQrDataUrl),
+    qr_data_url: qrGenerated ? currentQrDataUrl : null,
+    last_qr_ts: lastQrAt,
+    connected_as: connectedAs,
+    updated_at: statusUpdatedAt,
+    message
   };
 }
 
@@ -109,6 +191,10 @@ function onConnectionUpdate({ connection, lastDisconnect, qr }) {
   if (qr) {
     qrGenerated = true;
     ready = false;
+    currentQrDataUrl = qrToSvgDataUrl(qr);
+    lastQrAt = Date.now();
+    statusUpdatedAt = nowIST();
+    lastErrorMessage = null;
     console.log("\n📱 SCAN QR CODE:\n");
     qrcode.generate(qr, { small: true });
   }
@@ -120,8 +206,12 @@ function onConnectionUpdate({ connection, lastDisconnect, qr }) {
   if (connection === "open") {
     ready = true;
     qrGenerated = false;
+    currentQrDataUrl = null;
+    manualPause = false;
+    lastErrorMessage = null;
     reconnectAttempts = 0;
     lastHealthyAt = Date.now();
+    statusUpdatedAt = nowIST();
     connectedAs = sock?.user?.id?.split(":")[0] || null;
     console.log(`✅ WhatsApp connected as ${connectedAs}`);
   }
@@ -136,12 +226,18 @@ function onConnectionUpdate({ connection, lastDisconnect, qr }) {
       // WhatsApp invalidated the session (unlinked from the phone, or banned).
       // Clear it so the next connect produces a QR instead of looping.
       console.error("❌ Session logged out by WhatsApp - a fresh QR scan is required");
+      qrGenerated = false;
+      currentQrDataUrl = null;
+      connectedAs = null;
+      statusUpdatedAt = nowIST();
       clearAuthDir();
       scheduleReconnect(0);
     } else if (code === DisconnectReason.connectionReplaced) {
       // Another machine is using these credentials. Reconnecting would just
       // fight it. Stop and say so.
       reconnectAllowed = false;
+      lastErrorMessage = "Another instance took over this session. Stop the other machine, then click 'Try Scanning Again'.";
+      statusUpdatedAt = nowIST();
       console.error("❌ Another instance took over this session. Stop the other machine, then restart this container.");
     } else if (code === DisconnectReason.restartRequired) {
       // Normal right after pairing: WhatsApp asks for one reconnect.
@@ -170,12 +266,108 @@ function scheduleReconnect(delayMs) {
 // empty it instead.
 function clearAuthDir() {
   try {
+    if (!fs.existsSync(AUTH_DIR)) return;
     for (const entry of fs.readdirSync(AUTH_DIR)) {
       fs.rmSync(path.join(AUTH_DIR, entry), { recursive: true, force: true });
     }
   } catch (err) {
     console.error("⚠️ Could not clear auth dir:", err.message);
   }
+}
+
+export async function startWhatsAppLogin() {
+  if (ready) {
+    return { status: "authenticated", message: "WhatsApp is already connected and paired." };
+  }
+  manualPause = false;
+  reconnectAllowed = true;
+  lastErrorMessage = null;
+  reconnectAttempts = 0;
+  qrGenerated = false;
+  currentQrDataUrl = null;
+  statusUpdatedAt = nowIST();
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  connect().catch(err => {
+    console.error("❌ Manual connect failed:", err.message);
+    scheduleReconnect();
+  });
+
+  return { status: "started", message: "Connecting to WhatsApp and generating QR code..." };
+}
+
+export function cancelWhatsAppLogin() {
+  if (ready) {
+    return { status: "authenticated", message: "Already connected." };
+  }
+  manualPause = true;
+  reconnectAllowed = false;
+  qrGenerated = false;
+  currentQrDataUrl = null;
+  statusUpdatedAt = nowIST();
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  if (sock) {
+    try {
+      sock.ev.removeAllListeners("connection.update");
+      sock.ev.removeAllListeners("creds.update");
+      sock.end(undefined);
+    } catch { /* ignore */ }
+    sock = null;
+  }
+
+  return { status: "OK", message: "QR scan cancelled." };
+}
+
+export async function logoutWhatsAppSession() {
+  manualPause = false;
+  reconnectAllowed = true;
+  lastErrorMessage = null;
+  reconnectAttempts = 0;
+  ready = false;
+  qrGenerated = false;
+  currentQrDataUrl = null;
+  connectedAs = null;
+  statusUpdatedAt = nowIST();
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  if (sock) {
+    try {
+      sock.ev.removeAllListeners("connection.update");
+      sock.ev.removeAllListeners("creds.update");
+      await Promise.race([
+        sock.logout().catch(() => {}),
+        new Promise(r => setTimeout(r, 2500))
+      ]);
+      sock.end(undefined);
+    } catch { /* ignore */ }
+    sock = null;
+  }
+
+  clearAuthDir();
+  console.log("🚪 WhatsApp session cleared via Web UI — starting fresh QR flow");
+
+  connect().catch(err => {
+    console.error("❌ Connect after logout failed:", err.message);
+    scheduleReconnect();
+  });
+
+  return {
+    status: "OK",
+    message: "WhatsApp session deleted successfully. Generating a new QR code..."
+  };
 }
 
 // ------------------------
@@ -285,8 +477,8 @@ let lastMemMB = null;
 function livenessTick() {
   if (shuttingDown) return;
 
-  if (ready || qrGenerated) {
-    // Connected, or waiting on a human to scan - neither is a fault.
+  if (ready || qrGenerated || manualPause) {
+    // Connected, waiting on a human to scan, or paused by operator - not a fault.
     lastHealthyAt = Date.now();
     return;
   }

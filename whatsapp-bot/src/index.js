@@ -1,6 +1,15 @@
 import express from "express";
 import { watchHostMap } from "./utils.js";
-import { initWhatsApp, closeWhatsApp, enqueueSend, healthSnapshot } from "./whatsapp.js";
+import {
+  initWhatsApp,
+  closeWhatsApp,
+  enqueueSend,
+  healthSnapshot,
+  whatsappAuthStatus,
+  startWhatsAppLogin,
+  cancelWhatsAppLogin,
+  logoutWhatsAppSession
+} from "./whatsapp.js";
 
 const PORT = process.env.PORT || 3000;
 const HOOK_TOKEN = process.env.HOOK_TOKEN || "change_this_token";
@@ -92,6 +101,38 @@ app.post("/uptime-kuma", (req, res) => {
     if (!res.headersSent) {
       res.status(500).json({ error: "Internal Error" });
     }
+  }
+});
+
+// WhatsApp session & QR authentication endpoints (used by whatsapp-ui)
+app.get("/whatsapp/status", (req, res) => {
+  res.json(whatsappAuthStatus());
+});
+
+app.post("/whatsapp/start-login", async (req, res) => {
+  try {
+    const result = await startWhatsAppLogin();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+app.post("/whatsapp/cancel-login", (req, res) => {
+  try {
+    const result = cancelWhatsAppLogin();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+app.post("/whatsapp/logout", async (req, res) => {
+  try {
+    const result = await logoutWhatsAppSession();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
   }
 });
 

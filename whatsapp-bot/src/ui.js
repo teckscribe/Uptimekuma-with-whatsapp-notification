@@ -8,12 +8,31 @@ const __dirname = path.dirname(__filename);
 
 const UI_PORT = process.env.UI_PORT || 3002;
 const HOST_MAP_PATH = process.env.HOST_MAP_PATH || "/app/config/host_map.json";
+const BOT_API_URL = process.env.BOT_API_URL || "http://whatsapp-bot:3000";
 
 const app = express();
 app.use(express.json());
 
 // Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, "public")));
+
+async function callBotApi(endpoint, method = "GET") {
+  const candidates = [BOT_API_URL, "http://127.0.0.1:3000"];
+  let lastError = null;
+  for (const base of candidates) {
+    try {
+      const res = await fetch(`${base}${endpoint}`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(8000)
+      });
+      return await res.json();
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("Could not reach whatsapp-bot service");
+}
 
 // ------------------------
 // File Helpers
@@ -69,6 +88,62 @@ app.post("/api/hosts", (req, res) => {
     res.status(400).json(result);
   } else {
     res.json({ status: "saved" });
+  }
+});
+
+app.get("/api/whatsapp/status", async (req, res) => {
+  try {
+    const data = await callBotApi("/whatsapp/status", "GET");
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({
+      status: "error",
+      message: `Cannot reach whatsapp-bot container (${err.message})`,
+      qr_available: false,
+      qr_data_url: null
+    });
+  }
+});
+
+app.post("/api/whatsapp/start-login", async (req, res) => {
+  try {
+    const data = await callBotApi("/whatsapp/start-login", "POST");
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({
+      status: "error",
+      message: `Cannot reach whatsapp-bot container (${err.message})`,
+      qr_available: false,
+      qr_data_url: null
+    });
+  }
+});
+
+app.post("/api/whatsapp/cancel-login", async (req, res) => {
+  try {
+    const data = await callBotApi("/whatsapp/cancel-login", "POST");
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({
+      status: "error",
+      message: `Cannot reach whatsapp-bot container (${err.message})`,
+      qr_available: false,
+      qr_data_url: null
+    });
+  }
+});
+
+app.post("/api/whatsapp/logout", async (req, res) => {
+  try {
+    const data = await callBotApi("/whatsapp/logout", "POST");
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({
+      status: "error",
+      message: `Cannot reach whatsapp-bot container (${err.message})`,
+      qr_available: false,
+      qr_data_url: null
+    });
   }
 });
 
