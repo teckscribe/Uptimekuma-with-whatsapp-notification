@@ -695,7 +695,13 @@
           </div>
         </td>
       `;
-      tbody.appendChild(tr);
+      if (!isLocked) {
+        tbody.prepend(tr);
+        const firstInput = tr.querySelector("input");
+        if (firstInput) firstInput.focus();
+      } else {
+        tbody.appendChild(tr);
+      }
     }
     
     function toggleEdit(btn, isDefaultRow) {
