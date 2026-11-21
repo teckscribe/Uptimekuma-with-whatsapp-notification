@@ -620,17 +620,12 @@
         <table id="configTable">
           <thead>
             <tr>
-              <th width="38%">
-                <div class="th-sort-group">
-                  <span id="sort-btn-hostname" class="sort-trigger active" onclick="sortTable('hostname')" title="Sort by Hostname (A-Z / Z-A)">
-                    Monitor Hostname <span id="sort-icon-hostname" class="sort-arrow">▲</span>
-                  </span>
-                  <span id="sort-btn-ip" class="sort-trigger" onclick="sortTable('ip')" title="Sort by IP Address">
-                    IP <span id="sort-icon-ip" class="sort-arrow">⇅</span>
-                  </span>
-                </div>
+              <th width="35%">
+                <span id="sort-btn-hostname" class="sort-trigger active" onclick="sortTable('hostname')" title="Sort by Monitor Hostname">
+                  Monitor Hostname <span id="sort-icon-hostname" class="sort-arrow">▲</span>
+                </span>
               </th>
-              <th width="42%">
+              <th width="45%">
                 <span id="sort-btn-phone" class="sort-trigger" onclick="sortTable('phone')" title="Sort by Phone Numbers">
                   Phone Numbers (comma separated) <span id="sort-icon-phone" class="sort-arrow">⇅</span>
                 </span>
@@ -716,7 +711,7 @@
     }
 
     function updateSortHeaderUI() {
-      const cols = ["hostname", "ip", "phone"];
+      const cols = ["hostname", "phone"];
       cols.forEach(col => {
         const btn = document.getElementById(`sort-btn-${col}`);
         const icon = document.getElementById(`sort-icon-${col}`);
