@@ -326,6 +326,48 @@
       letter-spacing: 1px;
       padding: 0 16px 8px 16px;
       text-align: left;
+      user-select: none;
+    }
+
+    .th-sort-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .sort-trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      transition: all 0.2s ease;
+    }
+
+    .sort-trigger:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .sort-trigger.active {
+      color: #4ade80;
+      background: rgba(37, 211, 102, 0.14);
+      border-color: rgba(37, 211, 102, 0.35);
+    }
+
+    .sort-arrow {
+      font-size: 11px;
+      opacity: 0.75;
+    }
+
+    .sort-trigger.active .sort-arrow {
+      opacity: 1;
     }
 
     tr.data-row {
@@ -578,8 +620,21 @@
         <table id="configTable">
           <thead>
             <tr>
-              <th width="35%">Monitor Hostname</th>
-              <th width="45%">Phone Numbers (comma separated)</th>
+              <th width="38%">
+                <div class="th-sort-group">
+                  <span id="sort-btn-hostname" class="sort-trigger active" onclick="sortTable('hostname')" title="Sort by Hostname (A-Z / Z-A)">
+                    Monitor Hostname <span id="sort-icon-hostname" class="sort-arrow">▲</span>
+                  </span>
+                  <span id="sort-btn-ip" class="sort-trigger" onclick="sortTable('ip')" title="Sort by IP Address">
+                    IP <span id="sort-icon-ip" class="sort-arrow">⇅</span>
+                  </span>
+                </div>
+              </th>
+              <th width="42%">
+                <span id="sort-btn-phone" class="sort-trigger" onclick="sortTable('phone')" title="Sort by Phone Numbers">
+                  Phone Numbers (comma separated) <span id="sort-icon-phone" class="sort-arrow">⇅</span>
+                </span>
+              </th>
               <th width="20%">Actions</th>
             </tr>
           </thead>
@@ -637,6 +692,94 @@
   <div id="msg" class="msg"></div>
 
   <script>
+    let currentSortCol = "hostname";
+    let currentSortAsc = true;
+
+    function extractIpTuple(text) {
+      const match = String(text).match(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/);
+      if (!match) return null;
+      return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])];
+    }
+
+    function compareIpOrText(aText, bText) {
+      const ipA = extractIpTuple(aText);
+      const ipB = extractIpTuple(bText);
+      if (ipA && ipB) {
+        for (let i = 0; i < 4; i++) {
+          if (ipA[i] !== ipB[i]) return ipA[i] - ipB[i];
+        }
+        return aText.localeCompare(bText, undefined, { numeric: true, sensitivity: "base" });
+      }
+      if (ipA && !ipB) return -1;
+      if (!ipA && ipB) return 1;
+      return aText.localeCompare(bText, undefined, { numeric: true, sensitivity: "base" });
+    }
+
+    function updateSortHeaderUI() {
+      const cols = ["hostname", "ip", "phone"];
+      cols.forEach(col => {
+        const btn = document.getElementById(`sort-btn-${col}`);
+        const icon = document.getElementById(`sort-icon-${col}`);
+        if (!btn || !icon) return;
+        if (col === currentSortCol) {
+          btn.classList.add("active");
+          icon.textContent = currentSortAsc ? "▲" : "▼";
+        } else {
+          btn.classList.remove("active");
+          icon.textContent = "⇅";
+        }
+      });
+    }
+
+    function sortTable(col) {
+      if (currentSortCol === col) {
+        currentSortAsc = !currentSortAsc;
+      } else {
+        currentSortCol = col;
+        currentSortAsc = true;
+      }
+      updateSortHeaderUI();
+      applyDomSort();
+    }
+
+    function applyDomSort() {
+      const tbody = document.querySelector("#configTable tbody");
+      const rows = Array.from(tbody.querySelectorAll("tr.data-row"));
+      if (rows.length <= 1) return;
+
+      const dir = currentSortAsc ? 1 : -1;
+
+      rows.sort((rowA, rowB) => {
+        const hostA = rowA.children[0].children[0].value.trim();
+        const hostB = rowB.children[0].children[0].value.trim();
+        const phoneA = rowA.children[1].children[0].value.trim();
+        const phoneB = rowB.children[1].children[0].value.trim();
+
+        const isNewUnsavedA = !rowA.children[0].children[0].classList.contains("locked") && hostA !== "default";
+        const isNewUnsavedB = !rowB.children[0].children[0].classList.contains("locked") && hostB !== "default";
+        if (isNewUnsavedA && !isNewUnsavedB) return -1;
+        if (!isNewUnsavedA && isNewUnsavedB) return 1;
+
+        if (hostA === "default") return -1;
+        if (hostB === "default") return 1;
+
+        let cmp = 0;
+        if (currentSortCol === "ip") {
+          cmp = compareIpOrText(hostA, hostB);
+        } else if (currentSortCol === "phone") {
+          cmp = phoneA.localeCompare(phoneB, undefined, { numeric: true, sensitivity: "base" });
+          if (cmp === 0) {
+            cmp = hostA.localeCompare(hostB, undefined, { numeric: true, sensitivity: "base" });
+          }
+        } else {
+          cmp = hostA.localeCompare(hostB, undefined, { numeric: true, sensitivity: "base" });
+        }
+        return cmp * dir;
+      });
+
+      rows.forEach(r => tbody.appendChild(r));
+    }
+
     async function loadData() {
       try {
         const res = await fetch('/api/hosts');
@@ -647,16 +790,12 @@
         
         const entries = Object.entries(data);
         
-        // Sort alphabetically, keeping 'default' at the top
-        entries.sort((a, b) => {
-          if (a[0] === 'default') return -1;
-          if (b[0] === 'default') return 1;
-          return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
-        });
-        
         entries.forEach(([host, numbers]) => {
           addRow(host, numbers.join(", "), true);
         });
+
+        updateSortHeaderUI();
+        applyDomSort();
       } catch (err) {
         showMessage("Failed to load data from server.", "error");
       }
