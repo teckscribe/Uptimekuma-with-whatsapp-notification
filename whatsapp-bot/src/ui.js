@@ -13,8 +13,16 @@ const BOT_API_URL = process.env.BOT_API_URL || "http://whatsapp-bot:3000";
 const app = express();
 app.use(express.json());
 
-// Serve static files from the 'public' directory
-app.use(express.static(path.join(__dirname, "public")));
+// Serve static files from the 'public' directory with no-store to prevent stale browser cache
+app.use(express.static(path.join(__dirname, "public"), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+}));
 
 async function callBotApi(endpoint, method = "GET") {
   const candidates = [BOT_API_URL, "http://127.0.0.1:3000"];
